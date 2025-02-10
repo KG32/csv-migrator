@@ -40,6 +40,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     Insert(InsertConfig),
+    Reorder(ReorderConfig),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -54,6 +55,16 @@ struct InsertConfig {
     order: i32,
 }
 
+#[derive(Args, Debug, Clone)]
+struct ReorderConfig {
+    #[arg(long)]
+    path: String,
+    #[arg(long)]
+    column: String,
+    #[arg(long)]
+    order: i32,
+}
+
 fn main() {
     let cli = Cli::parse();
     run(cli).unwrap_or_else(|_| println!("{}", "Migration failed".red()));
@@ -63,6 +74,7 @@ fn main() {
 fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     match cli.command {
         Commands::Insert(insert_config) => InsertMigration::new(insert_config).run().unwrap(),
+        Commands::Reorder(reorder_config) => ReorderMigration::new(reorder_config).run().unwrap(),
     };
 
     Ok(())
@@ -149,6 +161,22 @@ impl InsertMigration {
     }
 }
 
+struct ReorderMigration {
+    config: ReorderConfig,
+}
+impl Migration for ReorderMigration {
+    type ConfigType = ReorderConfig;
+
+    fn new(config: Self::ConfigType) -> Self {
+        Self { config }
+    }
+
+    fn run(&self) -> Result<(), Box<dyn Error>> {
+        todo!();
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -158,17 +186,18 @@ mod tests {
 
     #[test]
     fn test_insert_column() {
-        fs::create_dir_all("test_files").unwrap();
+        let test_dir = "test_files/insert";
+        fs::create_dir_all(test_dir).unwrap();
         let mut path = PathBuf::new();
-        path.push("test_files/test.csv");
+        path.push(format!("{}/test.csv", test_dir));
         let mut file = File::create(path.clone()).unwrap();
         file.write_all(
-            b"H1,H2,H3,H4,H5,H6,H7,H8,H9\nV1,V2,V3,V4,V5,V6,V7,V8,V9\nV11,V22,V33,V44,V55,V66,V77,V88,V99",
+            b"H1,H2,H3,H4,H5,H6,H7,H8,H9\nA1,A2,A3,A4,A5,A6,A7,A8,A9\nB11,B22,B33,B44,B55,B66,B77,B88,B99",
         ).unwrap();
 
         let cli = Cli {
             command: Commands::Insert(InsertConfig {
-                path: "test_files".to_string(),
+                path: test_dir.to_string(),
                 column: "H_new".to_string(),
                 default_value: "V_new".to_string(),
                 order: 3,
@@ -181,7 +210,37 @@ mod tests {
         assert_eq!(
             modified_content,
             String::from(
-                "H1,H2,H_new,H3,H4,H5,H6,H7,H8,H9\nV1,V2,V_new,V3,V4,V5,V6,V7,V8,V9\nV11,V22,V_new,V33,V44,V55,V66,V77,V88,V99\n"
+                "H1,H2,H_new,H3,H4,H5,H6,H7,H8,H9\nA1,A2,V_new,A3,A4,A5,A6,A7,A8,A9\nB11,B22,V_new,B33,B44,B55,B66,B77,B88,B99\n"
+            )
+        )
+    }
+
+    #[test]
+    fn test_reorder_column() {
+        let test_dir = "test_files/reorder";
+        fs::create_dir_all(test_dir).unwrap();
+        let mut path = PathBuf::new();
+        path.push(format!("{}/test.csv", test_dir));
+        let mut file = File::create(path.clone()).unwrap();
+        file.write_all(
+            b"H1,H2,H3,H4,H5,H6,H7,H8,H9\nA1,A2,A3,A4,A5,A6,A7,A8,A9\nB11,B22,B33,B44,B55,B66,B77,B88,B99",
+        ).unwrap();
+
+        let cli = Cli {
+            command: Commands::Reorder(ReorderConfig {
+                path: test_dir.to_string(),
+                column: "H3".to_string(),
+                order: 1,
+            }),
+        };
+        run(cli).unwrap();
+        let mut modified_file = File::open(path.clone()).unwrap();
+        let mut modified_content = String::new();
+        modified_file.read_to_string(&mut modified_content).unwrap();
+        assert_eq!(
+            modified_content,
+            String::from(
+                "H3,H1,H2,H4,H5,H6,H7,H8,H9\nA3,A1,A2,A4,A5,A6,A7,A8,A9\nB33,B11,B44,B55,B66,B77,B88,B99\n"
             )
         )
     }

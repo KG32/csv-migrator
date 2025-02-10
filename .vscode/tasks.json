@@ -6,7 +6,8 @@
       "command": "test",
       "args": [
         "--",
-        "--nocapture"
+        "--color",
+        "always"
       ],
       "problemMatcher": [
         "$rustc"
