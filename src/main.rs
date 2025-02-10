@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{arg, command, Arg, Args, Command, Parser, Subcommand};
 use csv::StringRecord;
 use std::{
     error::Error,
@@ -12,46 +12,57 @@ pub enum Mode {
     Insert,
 }
 
-#[derive(Parser, Debug, Clone)]
-pub struct Config {
-    pub mode: Mode,
-    /// path to dir with csv files
-    pub path: String,
-    /// column name
-    pub column: String,
-    /// default value for new column
-    pub default_value: String,
-    /// the position where the column is inserted from the left (starting with 1)
-    pub order: i32,
+#[derive(Parser, Debug)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Insert(InsertConfig),
+}
+
+#[derive(Args, Debug)]
+struct InsertConfig {
+    #[arg(long)]
+    path: String,
+    #[arg(long)]
+    column: String,
+    #[arg(long)]
+    default_value: String,
+    #[arg(long)]
+    order: i32,
 }
 
 fn main() {
-    let config = Config::parse();
-    run(config).unwrap_or_else(|_| println!("Migration failed"));
+    let cli = Cli::parse();
+    run(cli).unwrap_or_else(|_| println!("Migration failed"));
 }
 
-fn run(config: Config) -> Result<(), Box<dyn Error>> {
-    let Config {
-        mode,
+fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
+    match cli.command {
+        Commands::Insert(insert_config) => insert(insert_config).unwrap(),
+    };
+
+    Ok(())
+}
+
+fn insert(config: InsertConfig) -> Result<(), Box<dyn Error>> {
+    let InsertConfig {
         path,
         column,
         default_value,
         order,
     } = config;
-
+    println!(
+        "Inserting {} with default value {} as #{} in path {}",
+        &column, &default_value, &order, &path
+    );
     let files = get_csv_files(&path)?;
-
-    match mode {
-        Mode::Insert => {
-            println!(
-                "Inserting {} with default value {} @ {}",
-                column, default_value, order
-            );
-            for file in files {
-                println!("\nMigrating {:?}", file.canonicalize().unwrap());
-                insert_column(&file, &column, &default_value, order)?;
-            }
-        }
+    for file in files {
+        println!("Migrating {:?}", &file);
+        insert_column(&file, &column, &default_value, order)?;
     }
 
     Ok(())
@@ -59,8 +70,8 @@ fn run(config: Config) -> Result<(), Box<dyn Error>> {
 
 fn insert_column(
     path: &PathBuf,
-    column: &str,
-    default_value: &str,
+    column: &String,
+    default_value: &String,
     order: i32,
 ) -> Result<(), Box<dyn Error>> {
     let mut content = String::new();
@@ -130,14 +141,15 @@ mod tests {
             b"H1,H2,H3,H4,H5,H6,H7,H8,H9\nV1,V2,V3,V4,V5,V6,V7,V8,V9\nV11,V22,V33,V44,V55,V66,V77,V88,V99",
         ).unwrap();
 
-        let config = Config {
-            mode: Mode::Insert,
-            path: "test_files".to_string(),
-            column: "H_new".to_string(),
-            default_value: "V_new".to_string(),
-            order: 3,
+        let cli = Cli {
+            command: Commands::Insert(InsertConfig {
+                path: "test_files".to_string(),
+                column: "H_new".to_string(),
+                default_value: "V_new".to_string(),
+                order: 3,
+            }),
         };
-        run(config).unwrap();
+        run(cli).unwrap();
         let mut modified_file = File::open(path.clone()).unwrap();
         let mut modified_content = String::new();
         modified_file.read_to_string(&mut modified_content).unwrap();
