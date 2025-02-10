@@ -1,4 +1,5 @@
-use clap::{arg, command, Arg, Args, Command, Parser, Subcommand};
+use clap::{arg, command, Args, Parser, Subcommand};
+use colored::Colorize;
 use csv::StringRecord;
 use std::{
     error::Error,
@@ -7,9 +8,27 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Parser, Debug, Clone, clap::ValueEnum)]
-pub enum Mode {
-    Insert,
+trait Migration {
+    type ConfigType;
+    fn new(config: Self::ConfigType) -> Self;
+    fn run(&self) -> Result<(), Box<dyn Error>>;
+    fn get_csv_files(&self, path: &str) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+        let mut csv_file_paths: Vec<PathBuf> = vec![];
+        let entries = fs::read_dir(path)?;
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let mut traversal_res = self.get_csv_files(path.to_str().unwrap())?;
+                csv_file_paths.append(&mut traversal_res);
+            }
+            let extension = path.extension().unwrap_or_default();
+            if extension.to_ascii_lowercase() == "csv" {
+                csv_file_paths.push(path);
+            }
+        }
+        Ok(csv_file_paths)
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -23,7 +42,7 @@ enum Commands {
     Insert(InsertConfig),
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 struct InsertConfig {
     #[arg(long)]
     path: String,
@@ -37,91 +56,97 @@ struct InsertConfig {
 
 fn main() {
     let cli = Cli::parse();
-    run(cli).unwrap_or_else(|_| println!("Migration failed"));
+    run(cli).unwrap_or_else(|_| println!("{}", "Migration failed".red()));
+    println!("{}", "Migration done".green());
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     match cli.command {
-        Commands::Insert(insert_config) => insert(insert_config).unwrap(),
+        Commands::Insert(insert_config) => InsertMigration::new(insert_config).run().unwrap(),
     };
 
     Ok(())
 }
 
-fn insert(config: InsertConfig) -> Result<(), Box<dyn Error>> {
-    let InsertConfig {
-        path,
-        column,
-        default_value,
-        order,
-    } = config;
-    println!(
-        "Inserting {} with default value {} as #{} in path {}",
-        &column, &default_value, &order, &path
-    );
-    let files = get_csv_files(&path)?;
-    for file in files {
-        println!("Migrating {:?}", &file);
-        insert_column(&file, &column, &default_value, order)?;
+#[derive(Clone)]
+struct InsertMigration {
+    config: InsertConfig,
+}
+impl Migration for InsertMigration {
+    type ConfigType = InsertConfig;
+
+    fn new(config: Self::ConfigType) -> Self {
+        Self { config }
     }
 
-    Ok(())
+    fn run(&self) -> Result<(), Box<dyn Error>> {
+        self.insert(self.config.clone())?;
+        Ok(())
+    }
 }
 
-fn insert_column(
-    path: &PathBuf,
-    column: &String,
-    default_value: &String,
-    order: i32,
-) -> Result<(), Box<dyn Error>> {
-    let mut content = String::new();
-    File::open(path)?.read_to_string(&mut content)?;
-    let mut reader = csv::Reader::from_reader(content.as_bytes());
-    let mut writer = csv::Writer::from_path(path)?;
-
-    // set headers
-    let headers = reader.headers()?.clone();
-    let mut new_headers = StringRecord::new();
-    for (i, header) in headers.iter().enumerate() {
-        if i as i32 == (order - 1) {
-            new_headers.push_field(column);
+impl InsertMigration {
+    fn insert(&self, config: InsertConfig) -> Result<(), Box<dyn Error>> {
+        let InsertConfig {
+            path,
+            column,
+            default_value,
+            order,
+        } = config;
+        println!(
+            "Inserting {} with default value {} as #{} in path {}",
+            &column.blue(),
+            &default_value.blue(),
+            &order.to_string().blue(),
+            &path.blue()
+        );
+        let files = self.get_csv_files(&path)?;
+        for file in files {
+            println!("Migrating {:?}", &file);
+            self.insert_column(&file, &column, &default_value, order)?;
         }
-        new_headers.push_field(header);
-    }
-    writer.write_record(&new_headers)?;
 
-    // set values
-    for record in reader.records() {
-        let record = record?;
-        let mut new_record = StringRecord::new();
-        for (j, field) in record.iter().enumerate() {
-            if j as i32 == (order - 1) {
-                new_record.push_field(default_value);
+        Ok(())
+    }
+
+    fn insert_column(
+        &self,
+        path: &PathBuf,
+        column: &String,
+        default_value: &String,
+        order: i32,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut content = String::new();
+        File::open(path)?.read_to_string(&mut content)?;
+        let mut reader = csv::Reader::from_reader(content.as_bytes());
+        let mut writer = csv::Writer::from_path(path)?;
+
+        // set headers
+        let headers = reader.headers()?.clone();
+        let mut new_headers = StringRecord::new();
+        for (i, header) in headers.iter().enumerate() {
+            if i as i32 == (order - 1) {
+                new_headers.push_field(column);
             }
-            new_record.push_field(field);
+            new_headers.push_field(header);
         }
-        writer.write_record(&new_record)?;
-    }
+        writer.write_record(&new_headers)?;
 
-    Ok(())
-}
+        // set values
+        for record in reader.records() {
+            let record = record?;
+            let mut new_record = StringRecord::new();
+            for (j, field) in record.iter().enumerate() {
+                if j as i32 == (order - 1) {
+                    new_record.push_field(default_value);
+                }
+                new_record.push_field(field);
+            }
+            writer.write_record(&new_record)?;
+        }
 
-fn get_csv_files(path: &str) -> Result<Vec<PathBuf>, Box<dyn Error>> {
-    let mut csv_file_paths: Vec<PathBuf> = vec![];
-    let entries = fs::read_dir(path)?;
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            let mut traversal_res = get_csv_files(path.to_str().unwrap())?;
-            csv_file_paths.append(&mut traversal_res);
-        }
-        let extension = path.extension().unwrap_or_default();
-        if extension.to_ascii_lowercase() == "csv" {
-            csv_file_paths.push(path);
-        }
+        Ok(())
     }
-    Ok(csv_file_paths)
 }
 
 #[cfg(test)]

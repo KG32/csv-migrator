@@ -4,10 +4,25 @@
     {
       "type": "cargo",
       "command": "test",
-      "args": ["--", "--nocapture"],
-      "problemMatcher": ["$rustc"],
+      "args": [
+        "--",
+        "--nocapture"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
       "group": "test",
       "label": "rust: cargo test"
-    }
+    },
+    {
+      "type": "cargo",
+      "command": "build",
+      "args": ["--release"],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": "build",
+      "label": "rust: cargo build release"
+    },
   ]
 }
